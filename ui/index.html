@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ModUp</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #141920; --panel-2: #1a2029; --line: #232b36;
+    --text: #e6eaf0; --dim: #8b96a6; --faint: #5c6675;
+    --accent: #6aa8ff; --accent-soft: rgba(106,168,255,.14);
+    --ok: #4cc38a; --ok-soft: rgba(76,195,138,.14);
+    --warn: #f0b44c; --warn-soft: rgba(240,180,76,.14);
+    --bad: #f0706a; --bad-soft: rgba(240,112,106,.14);
+    --gh: #c39bff; --gh-soft: rgba(195,155,255,.14);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  /* Полосы прокрутки — тёмные и тонкие, в цвет окна (стандартные белые Windows на тёмном фоне светятся). */
+  :root { color-scheme: dark; }
+  * { scrollbar-width: thin; scrollbar-color: #2c3542 transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a3340; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a4656; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+  .app > .body { flex: 1; }
+  .app > .statusbar { flex: 0 0 30px; }
+  .body { display: grid; grid-template-columns: 250px 1fr 310px; min-height: 0; }
+
+  .side { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .brand { display: flex; align-items: center; gap: 9px; padding: 14px 14px 6px; font-weight: 700; font-size: 15px; }
+  .brand .logo { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, var(--accent), #8a7bff); display: grid; place-items: center; font-size: 12px; color: #0b0e12; font-weight: 800; }
+  .side h3 { margin: 12px 14px 6px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .folders { overflow: auto; padding: 0 8px 8px; flex: 1; }
+  .folder { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+  .folder:hover { background: var(--panel-2); }
+  .folder { position: relative; }
+  .folder .rm { position: absolute; right: 8px; top: 50%; margin-top: -11px; width: 22px; height: 22px; border: 0; border-radius: 6px; background: var(--panel-2); color: var(--faint); font-size: 12px; line-height: 20px; padding: 0; cursor: pointer; opacity: 0; }
+  .folder:hover .rm, .folder:focus-within .rm, .folder .rm:focus-visible { opacity: 1; }
+  .folder:hover .badge, .folder:focus-within .badge { visibility: hidden; }
+  .folder .rm:hover { color: var(--text); background: var(--line); }
+  .folder.active { background: var(--accent-soft); border-color: rgba(106,168,255,.35); }
+  .folder .name { grid-column: 1; grid-row: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .folder .meta { grid-column: 1; grid-row: 2; color: var(--faint); font-size: 11.5px; font-family: "Cascadia Mono", Consolas, monospace; }
+  .badge { grid-column: 2; grid-row: 1 / span 2; align-self: center; min-width: 22px; padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: 700; text-align: center; background: var(--ok-soft); color: var(--ok); }
+  .badge.zero { background: transparent; color: var(--faint); font-weight: 500; }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  .badge.none { background: transparent; color: var(--faint); font-weight: 400; }
+  .side .foot { padding: 10px; border-top: 1px solid var(--line); display: grid; gap: 6px; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font: inherit; font-weight: 500; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: #33404f; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn:focus-visible, .chip:focus-visible, .folder:focus-visible, tr:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn.primary { background: var(--accent); color: #0b1220; border-color: transparent; font-weight: 600; }
+  .btn.ghost { background: transparent; }
+  .btn.small { height: 26px; padding: 0 9px; font-size: 12px; }
+  .btn.danger { color: var(--bad); }
+
+  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .toolbar .title { font-size: 16px; font-weight: 700; margin-right: 6px; min-width: 0; }
+  .toolbar .title small { display: block; font-size: 11.5px; font-weight: 400; color: var(--faint); font-family: "Cascadia Mono", Consolas, monospace; }
+  .search { flex: 1; min-width: 140px; height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 0 10px; font: inherit; }
+  .chips { display: flex; gap: 6px; padding: 10px 14px 0; flex-wrap: wrap; }
+  .chip { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--line); background: transparent; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; }
+  .chip b { color: var(--text); font-weight: 600; margin-left: 4px; }
+  .chip.on { background: var(--panel-2); color: var(--text); border-color: #33404f; }
+  .banner { margin: 10px 14px 0; border-radius: 10px; padding: 9px 12px; display: grid; gap: 3px; }
+  .banner.warn { border: 1px solid rgba(240,180,76,.35); background: var(--warn-soft); }
+  .banner.warn .h { color: var(--warn); font-weight: 600; }
+  .banner.warn li { color: #e9d9b8; }
+  .banner.err { border: 1px solid rgba(240,112,106,.35); background: var(--bad-soft); color: #f3c3c0; }
+  .banner.info { border: 1px solid rgba(106,168,255,.35); background: var(--accent-soft); color: #cfe0ff; }
+  .banner ul { margin: 0; padding-left: 18px; }
+  .tablewrap { flex: 1; overflow: auto; margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { position: sticky; top: 0; background: var(--bg); text-align: left; font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); font-weight: 600; padding: 7px 10px; border-bottom: 1px solid var(--line); z-index: 1; }
+  td { padding: 8px 10px; border-bottom: 1px solid #1a212b; vertical-align: middle; }
+  tr.row { cursor: pointer; }
+  tr.row:hover td { background: #121820; }
+  tr.row.sel td { background: #142033; }
+  .modcell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .ico { flex: none; width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; font-weight: 700; font-size: 12px; color: #0b0e12; overflow: hidden; }
+  .ico img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
+  .mname { font-weight: 600; }
+  .mid { color: var(--faint); font-size: 11.5px; font-family: "Cascadia Mono", Consolas, monospace; }
+  .ver { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+  .ver .arrow { color: var(--faint); margin: 0 5px; }
+  .ver .new { color: var(--ok); font-weight: 600; }
+  .ver .pre { color: var(--warn); font-size: 10.5px; margin-left: 4px; }
+  .src { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .src.modrinth { background: var(--ok-soft); color: var(--ok); }
+  .src.github { background: var(--gh-soft); color: var(--gh); }
+  .src.unknown { background: var(--bad-soft); color: var(--bad); }
+  .src.ignored { background: #1d232c; color: var(--faint); }
+  .status { font-size: 11.5px; color: var(--dim); font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; margin-top: 1px; }
+  .status.up { color: var(--ok); }
+  .status.bad { color: var(--warn); }
+  .status.err { color: var(--bad); }
+  input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+
+  .detail { border-left: 1px solid var(--line); background: var(--panel); padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+  .detail .head { display: flex; gap: 10px; align-items: center; }
+  .detail .head .ico { width: 40px; height: 40px; border-radius: 10px; font-size: 16px; }
+  .detail h2 { margin: 0 0 3px; font-size: 16px; }
+  .kv { display: grid; grid-template-columns: 92px 1fr; gap: 6px 10px; font-size: 12.5px; margin: 0; }
+  .kv dt { color: var(--faint); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .card h4 { margin: 0 0 6px; font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+  .changelog { white-space: pre-wrap; color: #c9d2de; max-height: 260px; overflow: auto; font-size: 12.5px; }
+  .inline { display: flex; gap: 6px; margin-top: 8px; }
+  .inline input { flex: 1; min-width: 0; height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 0 9px; font: 12px "Cascadia Mono", Consolas, monospace; }
+  .empty { margin: auto; text-align: center; max-width: 420px; color: var(--dim); display: grid; gap: 12px; padding: 30px; }
+  .empty h2 { color: var(--text); margin: 0; font-size: 18px; }
+  .empty .row2 { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+  .statusbar { display: flex; align-items: center; gap: 18px; padding: 0 14px; background: #0b0e12; border-top: 1px solid var(--line); color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; }
+  .statusbar .warn { color: var(--warn); }
+  .statusbar a { color: var(--dim); cursor: pointer; text-decoration: underline; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(5,7,10,.62); display: none; align-items: center; justify-content: center; z-index: 10; }
+  .overlay.show { display: flex; }
+  .modal { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 60px); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+  .modal header { padding: 14px 16px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 15px; display: flex; align-items: center; }
+  .modal header .x { margin-left: auto; }
+  .modal .content { padding: 12px 16px; overflow-y: auto; overflow-x: hidden; display: grid; gap: 10px; }
+  .modal h3 { margin: 6px 0 0; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+  .modal h3 .btn { margin-left: auto; letter-spacing: 0; text-transform: none; }
+  .modal footer { padding: 12px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
+  .pick { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; min-width: 0; }
+  .pick > span:not(.m) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pick:hover { background: var(--panel-2); }
+  .pick .m { color: var(--faint); font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; margin-left: auto; }
+  .busy { display: grid; gap: 12px; justify-items: center; color: var(--dim); }
+  .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+  .toast { position: fixed; right: 16px; bottom: 44px; max-width: 420px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; z-index: 20; box-shadow: 0 10px 30px rgba(0,0,0,.5); white-space: pre-line; }
+  .toast.err { border-color: rgba(240,112,106,.5); }
+  .updbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--accent-soft); border-bottom: 1px solid rgba(106,168,255,.35); font-size: 13px; }
+  .updbar[hidden] { display: none; }
+  .updbar .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brand .ver { margin-left: 6px; color: var(--faint); font-size: 11px; font-weight: 500; }
+  .notes { white-space: pre-line; font-size: 12.5px; color: var(--dim); max-height: 260px; overflow: auto; }
+  .errsec { display: grid; gap: 4px; }
+  .errsec h3 { margin: 6px 0 2px; }
+  .errsec ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 12.5px; }
+  .errsec li { overflow-wrap: anywhere; }
+  .errsec.bad h3 { color: var(--bad); }
+  .errsec.ok { color: var(--dim); font-size: 12.5px; }
+  .field { display: grid; gap: 4px; }
+  .field label { color: var(--dim); font-size: 12px; }
+  .field input[type=password], .field input[type=text] { height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 0 9px; font: 12px "Cascadia Mono", Consolas, monospace; }
+  .hint { color: var(--faint); font-size: 12px; }
+  .modal.wide { width: min(760px, calc(100vw - 32px)); }
+  .mg-sum { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mg-sum span { padding: 3px 9px; border-radius: 10px; font-size: 11.5px; background: var(--panel-2); color: var(--dim); }
+  .mg-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 6px 8px; border-radius: 8px; }
+  .mg-row:hover { background: var(--panel-2); }
+  .mg-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mg-row .vv { font: 11.5px "Cascadia Mono", Consolas, monospace; color: var(--dim); white-space: nowrap; }
+  .mg-row .note { grid-column: 2 / span 2; color: var(--faint); font-size: 11.5px; overflow-wrap: anywhere; }
+  .st { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; font-weight: 700; margin-left: 6px; vertical-align: 1px; }
+  .st.ready { background: var(--ok-soft); color: var(--ok); }
+  .st.same { background: var(--accent-soft); color: var(--accent); }
+  .st.beta, .st.manual { background: var(--warn-soft); color: var(--warn); }
+  .st.missing, .st.error { background: var(--bad-soft); color: var(--bad); }
+  .st.skip { background: transparent; color: var(--faint); border: 1px solid var(--line); }
+  .dest { display: grid; gap: 6px; }
+  .dest .path { font: 12px "Cascadia Mono", Consolas, monospace; color: var(--text); overflow-wrap: anywhere; }
+  select { height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 0 8px; font: inherit; }
+
+  @media (max-width: 1100px) { .body { grid-template-columns: 220px 1fr; } .detail { display: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="updbar" id="updbar" hidden></div>
+  <div class="body">
+    <aside class="side">
+      <div class="brand"><span class="logo">M</span>ModUp</div>
+      <div class="folders" id="folders"></div>
+      <div class="foot">
+        <button class="btn primary" type="button" id="btn-all" hidden>⇪ Обновить всё везде</button>
+        <button class="btn" type="button" id="btn-add">＋ Добавить папку</button>
+        <button class="btn ghost" type="button" id="btn-discover">🔍 Найти инстансы</button>
+        <button class="btn ghost" type="button" id="btn-settings">⚙ Настройки</button>
+      </div>
+    </aside>
+
+    <section class="main" id="main"></section>
+    <aside class="detail" id="detail"></aside>
+  </div>
+  <div class="statusbar" id="statusbar"></div>
+</div>
+
+<div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
+
+<script>
+(function () {
+  "use strict";
+  var COLORS = ["#6aa8ff","#4cc38a","#f0b44c","#c39bff","#f0706a","#5fd4d4","#e48ad6","#9fbf5a"];
+  var LAUNCHERS = { prism: "Prism Launcher", multimc: "MultiMC", instance: "Инстансы", folder: "Папки" };
+  var S = { folders: [], current: null, view: null, filter: "all", q: "", sel: {}, open: null, settings: {}, checked: false };
+
+  function api() { return window.pywebview.api; }
+  function el(t, c, txt) { var e = document.createElement(t); if (c) e.className = c; if (txt != null) e.textContent = txt; return e; }
+  function color(s) { var h = 0; s = String(s || ""); for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return COLORS[h % COLORS.length]; }
+  function ico(r, big) {
+    var d = el("div", "ico");
+    if (r.icon && (/^https:\/\//.test(r.icon) || /^data:image\//.test(r.icon))) {
+      var img = el("img"); img.src = r.icon; img.alt = ""; img.onerror = function () { d.textContent = (r.name || "?").charAt(0); d.style.background = color(r.group); };
+      d.appendChild(img);
+    } else { d.textContent = (r.name || "?").charAt(0); d.style.background = color(r.group); }
+    return d;
+  }
+  function toast(msg, err) {
+    var t = el("div", "toast" + (err ? " err" : ""), msg); document.body.appendChild(t);
+    setTimeout(function () { t.remove(); }, err ? 7000 : 4500);
+  }
+
+  // ── занятость: спиннер с текстом из ядра ──
+  var pollTimer = null;
+  function busy(text) {
+    var m = document.getElementById("modal"); m.innerHTML = ""; m.className = "modal";
+    var c = el("div", "content"); var b = el("div", "busy"); b.appendChild(el("div", "spinner")); var t = el("div", "", text || "Работаю…"); b.appendChild(t); c.appendChild(b);
+    c.style.padding = "30px"; m.appendChild(c); document.getElementById("overlay").classList.add("show");
+    pollTimer = setInterval(function () { api().progress().then(function (p) { if (p && p.text) t.textContent = p.text; }); }, 350);
+  }
+  function unbusy() { clearInterval(pollTimer); pollTimer = null; document.getElementById("overlay").classList.remove("show"); }
+  function run(text, promise) { busy(text); return promise.then(function (r) { unbusy(); return r; }, function (e) { unbusy(); errorBox("Что-то пошло не так", [{ title: "Ошибка", items: [String(e && e.message || e)], bad: true }]); throw { shown: true, error: e }; }); }
+
+  // Окно «была ошибка»: не пропадает само, как подсказка, — видно, что именно не вышло.
+  // sections: [{title, items, bad}], opts: {ok: строка итога, report: путь к отчёту, folder: путь}
+  function errorBox(title, sections, opts) {
+    opts = opts || {};
+    modal("⚠ " + title, function (c, f) {
+      if (opts.ok) c.appendChild(el("div", "errsec ok", opts.ok));
+      sections.forEach(function (sec) {
+        if (!sec.items || !sec.items.length) return;
+        var d = el("div", "errsec" + (sec.bad ? " bad" : "")); d.appendChild(el("h3", "", sec.title + " (" + sec.items.length + ")"));
+        var ul = el("ul"); sec.items.forEach(function (x) { ul.appendChild(el("li", "", x)); }); d.appendChild(ul); c.appendChild(d);
+      });
+      if (opts.report) c.appendChild(el("div", "hint", "Подробный отчёт: " + opts.report));
+      if (opts.report) { var r = el("button", "btn ghost", "Открыть отчёт"); r.onclick = function () { api().open_file(opts.report); }; f.appendChild(r); }
+      if (opts.folder) { var o = el("button", "btn ghost", "Открыть папку"); o.onclick = function () { api().open_folder(opts.folder); }; f.appendChild(o); }
+      var ok = el("button", "btn primary", "Понятно"); ok.onclick = closeModal; f.appendChild(ok);
+    }, true);
+  }
+
+  // ── папки слева ──
+  function renderFolders() {
+    renderUpdateAll();
+    var box = document.getElementById("folders"); box.innerHTML = "";
+    var groups = {};
+    S.folders.forEach(function (f) { (groups[f.launcher] = groups[f.launcher] || []).push(f); });
+    ["prism", "multimc", "instance", "folder"].forEach(function (g) {
+      if (!groups[g]) return;
+      box.appendChild(el("h3", "", LAUNCHERS[g] || g));
+      groups[g].forEach(function (f) {
+        var d = el("div", "folder" + (f.path === S.current ? " active" : "")); d.tabIndex = 0; d.title = f.path;
+        d.appendChild(el("div", "name", f.name));
+        var b;
+        if (f.mods == null) b = el("span", "badge none", "—");
+        else if (f.updates) b = el("span", "badge", String(f.updates));
+        else if (f.problems) b = el("span", "badge warn", "!");
+        else b = el("span", "badge zero", "✓");
+        d.appendChild(b);
+        d.appendChild(el("div", "meta", (f.game || "версия ?") + (f.mods != null ? " · " + f.mods + " модов" : "") + (f.exists ? "" : " · нет папки")));
+        var rm = el("button", "rm", "✕"); rm.type = "button"; rm.title = "Убрать из списка (сами моды не тронутся)";
+        rm.setAttribute("aria-label", "Убрать «" + f.name + "» из списка");
+        rm.onclick = function (e) { e.stopPropagation(); removeFolder(f.path, f.name); };
+        d.appendChild(rm);
+        d.onclick = function () { select(f.path); };
+        d.onkeydown = function (e) { if (e.key === "Enter") select(f.path); if (e.key === "Delete") removeFolder(f.path, f.name); };
+        box.appendChild(d);
+      });
+    });
+  }
+
+  function select(path) {
+    S.current = path; S.open = null; S.sel = {};
+    renderFolders();
+    api().view(path).then(function (v) {
+      S.view = v;
+      (v.rows || []).forEach(function (r) { if (r.update) S.sel[r.key] = true; });
+      var first = (v.rows || []).find(function (r) { return r.update; }) || (v.rows || [])[0];
+      S.open = first ? first.key : null;
+      renderMain(); renderDetail(); renderStatus();
+    });
+  }
+
+  // ── центр ──
+  function visible() {
+    return (S.view.rows || []).filter(function (r) {
+      if (S.q && (r.name + " " + r.id + " " + r.filename).toLowerCase().indexOf(S.q) < 0) return false;
+      if (S.filter === "up") return !!r.update;
+      if (S.filter === "unk") return r.source === "unknown" || r.source === "ignored";
+      if (S.filter === "bad") return !!r.problem || r.status === "Ошибка проверки";
+      return true;
+    });
+  }
+
+  function renderEmpty(main) {
+    var e = el("div", "empty");
+    if (!S.folders.length) {
+      e.appendChild(el("h2", "", "Добавь папку с модами"));
+      e.appendChild(el("div", "", "Выбери папку mods вручную или найди инстансы Prism / MultiMC — ModUp сверит моды с Modrinth и GitHub и покажет обновления."));
+      var r = el("div", "row2"); var a = el("button", "btn primary", "🔍 Найти инстансы"); a.onclick = discover; r.appendChild(a);
+      var b = el("button", "btn", "＋ Выбрать папку"); b.onclick = addFolder; r.appendChild(b); e.appendChild(r);
+    } else {
+      e.appendChild(el("h2", "", "Выбери папку слева"));
+      var c = el("button", "btn primary", "↻ Проверить все папки"); c.onclick = function () { checkAll(); }; var r2 = el("div", "row2"); r2.appendChild(c); e.appendChild(r2);
+    }
+    main.appendChild(e);
+  }
+
+  function renderMain() {
+    var main = document.getElementById("main"); main.innerHTML = "";
+    if (!S.current || !S.view) { renderEmpty(main); return; }
+    var v = S.view;
+    var tb = el("div", "toolbar");
+    var t = el("div", "title", v.name);
+    t.appendChild(el("small", "", "Minecraft " + (v.game || "?") + " · " + (v.loader || "fabric") + (v.rows ? " · " + v.rows.length + " модов" : "") + (v.disabled ? " · выключено " + v.disabled : "")));
+    tb.appendChild(t);
+    var search = el("input", "search"); search.placeholder = "Поиск мода…"; search.value = S.q;
+    search.oninput = function () { S.q = search.value.trim().toLowerCase(); renderRows(); };
+    tb.appendChild(search);
+    var bc = el("button", "btn", "↻ Проверить"); bc.type = "button"; bc.onclick = function () { checkAll([S.current]); }; tb.appendChild(bc);
+    var br = el("button", "btn", "⤺ Откат"); br.type = "button"; br.disabled = !v.backups; br.title = v.backups ? "Вернуть последнее обновление" : "Бэкапов нет";
+    br.onclick = rollback; tb.appendChild(br);
+    var be = el("button", "btn", "⇩ Экспорт модов"); be.type = "button"; be.disabled = !v.rows; be.title = "Сохранить моды этой папки архивом — чтобы скинуть другу";
+    be.onclick = exportMods; tb.appendChild(be);
+    var bm = el("button", "btn", "⇢ На другую версию"); bm.type = "button"; bm.title = "Подобрать эти моды под другую версию Minecraft и скачать в отдельную папку";
+    bm.onclick = migrateStart; tb.appendChild(bm);
+    var ba = el("button", "btn primary", "Обновить выбранные"); ba.type = "button"; ba.id = "apply"; ba.onclick = applySelected; tb.appendChild(ba);
+    main.appendChild(tb);
+
+    if (!v.rows) {
+      var info = el("div", "banner info", "Эта папка ещё не проверялась — нажми «Проверить».");
+      main.appendChild(info); renderApply(); return;
+    }
+    var chips = el("div", "chips"); chips.id = "chips"; main.appendChild(chips);
+    if (v.errors && v.errors.length) main.appendChild(el("div", "banner err", "Не удалось проверить: " + v.errors.join("; ")));
+    if (!v.game) {
+      var gb = el("div", "banner info"); gb.appendChild(el("div", "", "Не понял, какая здесь версия Minecraft. Укажи её — иначе не смогу подобрать обновления."));
+      var gi = el("div", "inline"); var inp = el("input"); inp.placeholder = "например 26.2"; var save = el("button", "btn", "Сохранить");
+      save.onclick = function () { api().set_game_version(S.current, inp.value.trim()).then(function () { checkAll([S.current]); }); };
+      gi.appendChild(inp); gi.appendChild(save); gb.appendChild(gi); main.appendChild(gb);
+    }
+    if (v.problems && v.problems.length) {
+      var pb = el("div", "banner warn"); pb.appendChild(el("div", "h", "⚠ В папке " + v.problems.length + " " + plural(v.problems.length, "проблема", "проблемы", "проблем")));
+      var ul = el("ul"); v.problems.forEach(function (p) { ul.appendChild(el("li", "", p)); }); pb.appendChild(ul); main.appendChild(pb);
+    }
+    var wrap = el("div", "tablewrap"); var table = el("table");
+    var thead = el("thead"); var hr = el("tr");
+    var th0 = el("th"); th0.style.width = "34px"; var all = el("input"); all.type = "checkbox"; all.id = "all"; all.setAttribute("aria-label", "Выбрать все обновления");
+    all.onclick = function () { (v.rows || []).forEach(function (r) { if (r.update) S.sel[r.key] = all.checked; }); renderRows(); renderApply(); };
+    th0.appendChild(all); hr.appendChild(th0);
+    ["Мод", "Источник", "Версия и статус"].forEach(function (h) { hr.appendChild(el("th", "", h)); });
+    thead.appendChild(hr); table.appendChild(thead);
+    var tbody = el("tbody"); tbody.id = "rows"; table.appendChild(tbody); wrap.appendChild(table); main.appendChild(wrap);
+    renderChips(); renderRows(); renderApply();
+  }
+
+  // Описание изменений приходит в Markdown — показываем простым текстом: без #, разметки ссылок и **.
+  function plainChangelog(md) {
+    return String(md || "").replace(/\r/g, "")
+      .replace(/^#{1,6}\s*/gm, "")
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/\*\*([^*]+)\*\*/g, "$1").replace(/__([^_]+)__/g, "$1")
+      .replace(/^\s*[-*+]\s+/gm, "• ")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\n{3,}/g, "\n\n").trim();
+  }
+  function fmtSize(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + " МБ" : Math.max(1, Math.round(b / 1024)) + " КБ"; }
+  function plural(n, a, b, c) { var m = n % 10, h = n % 100; if (m === 1 && h !== 11) return a; if (m >= 2 && m <= 4 && (h < 12 || h > 14)) return b; return c; }
+
+  function renderChips() {
+    var c = document.getElementById("chips"); if (!c) return; c.innerHTML = "";
+    var rows = S.view.rows || [];
+    var counts = { all: rows.length, up: rows.filter(function (r) { return r.update; }).length,
+      unk: rows.filter(function (r) { return r.source === "unknown" || r.source === "ignored"; }).length,
+      bad: rows.filter(function (r) { return r.problem || r.status === "Ошибка проверки"; }).length };
+    [["all", "Все"], ["up", "Есть обновление"], ["unk", "Не найдены"], ["bad", "Проблемы"]].forEach(function (p) {
+      var b = el("button", "chip" + (S.filter === p[0] ? " on" : "")); b.type = "button"; b.textContent = p[1]; b.appendChild(el("b", "", String(counts[p[0]])));
+      b.onclick = function () { S.filter = p[0]; renderChips(); renderRows(); }; c.appendChild(b);
+    });
+  }
+
+  var SRC = { modrinth: "Modrinth", github: "GitHub", unknown: "Не найден", ignored: "Не трогать" };
+
+  function renderRows() {
+    var tb = document.getElementById("rows"); if (!tb) return; tb.innerHTML = "";
+    visible().forEach(function (r) {
+      var tr = el("tr", "row" + (S.open === r.key ? " sel" : "")); tr.tabIndex = 0;
+      var td0 = el("td"); var cb = el("input"); cb.type = "checkbox"; cb.disabled = !r.update; cb.checked = !!S.sel[r.key];
+      cb.setAttribute("aria-label", "Обновить " + r.name);
+      cb.onclick = function (e) { e.stopPropagation(); S.sel[r.key] = cb.checked; renderApply(); };
+      td0.appendChild(cb); tr.appendChild(td0);
+      var td1 = el("td"); var mc = el("div", "modcell"); mc.appendChild(ico(r));
+      var t = el("div"); t.appendChild(el("div", "mname", r.name)); t.appendChild(el("div", "mid", r.id || r.filename)); mc.appendChild(t);
+      td1.appendChild(mc); tr.appendChild(td1);
+      var td2 = el("td"); td2.appendChild(el("span", "src " + r.source, SRC[r.source] || r.source)); tr.appendChild(td2);
+      var td3 = el("td", "ver"); td3.appendChild(document.createTextNode(r.version || "?"));
+      if (r.update) {
+        td3.appendChild(el("span", "arrow", "→")); td3.appendChild(el("span", "new", r.update.version));
+        if (r.update.type && r.update.type !== "release") td3.appendChild(el("span", "pre", r.update.type));
+      }
+      var cls = r.update ? "up" : r.status === "Ошибка проверки" ? "err" : (r.problem || r.source === "unknown") ? "bad" : "";
+      td3.appendChild(el("div", "status " + cls, r.problem || r.status));
+      tr.appendChild(td3);
+      tr.onclick = function () { S.open = r.key; renderRows(); renderDetail(); };
+      tr.onkeydown = function (e) { if (e.key === "Enter") { S.open = r.key; renderRows(); renderDetail(); } };
+      tb.appendChild(tr);
+    });
+  }
+
+  function selectedKeys() { return Object.keys(S.sel).filter(function (k) { return S.sel[k]; }); }
+  function renderApply() {
+    var b = document.getElementById("apply"); if (!b) return;
+    var n = selectedKeys().length; b.textContent = n ? "Обновить выбранные (" + n + ")" : "Обновить выбранные"; b.disabled = !n;
+    var all = document.getElementById("all");
+    if (all) { var ups = (S.view.rows || []).filter(function (r) { return r.update; }).length; all.checked = n > 0 && n === ups; all.disabled = !ups; }
+  }
+
+  // ── карточка справа ──
+  function renderDetail() {
+    var d = document.getElementById("detail"); d.innerHTML = "";
+    var r = S.view && (S.view.rows || []).find(function (x) { return x.key === S.open; });
+    if (!r) { d.appendChild(el("div", "hint", "Выбери мод в списке — здесь будут подробности.")); return; }
+    var h = el("div", "head"); h.appendChild(ico(r, true));
+    var t = el("div"); t.appendChild(el("h2", "", r.name)); t.appendChild(el("span", "src " + r.source, SRC[r.source] || r.source)); h.appendChild(t); d.appendChild(h);
+    var kv = el("dl", "kv");
+    function row(k, v) { if (!v) return; kv.appendChild(el("dt", "", k)); kv.appendChild(el("dd", "", v)); }
+    row("ID", r.id); row("Файл", r.filename); row("Сейчас", r.version || "?");
+    row("Новая", r.update ? r.update.version + (r.update.type !== "release" ? " (" + r.update.type + ")" : "") : "—");
+    if (r.where && r.where.length > 1) row("Где стоит", r.where.join(", "));
+    if (r.repo) row("GitHub", r.repo);
+    d.appendChild(kv);
+    if (r.reason) d.appendChild(el("div", "card hint", r.reason));
+    if (r.update && r.update.changelog) {
+      var c = el("div", "card"); c.appendChild(el("h4", "", "Что нового")); c.appendChild(el("div", "changelog", plainChangelog(r.update.changelog))); d.appendChild(c);
+    }
+    if (r.source === "unknown" || r.source === "github") {
+      var c2 = el("div", "card"); c2.appendChild(el("h4", "", r.source === "unknown" ? "Источник не найден" : "Другой GitHub"));
+      c2.appendChild(el("div", "", r.source === "unknown" ? "Вставь ссылку на GitHub мода — запомню и буду проверять там." : "Если обновления лежат в другом репозитории — укажи его."));
+      var g = el("div", "inline"); var inp = el("input"); inp.placeholder = "https://github.com/автор/мод"; if (r.repo) inp.value = "https://github.com/" + r.repo;
+      var save = el("button", "btn", "Сохранить");
+      save.onclick = function () {
+        api().set_github(r.id, inp.value).then(function (res) { if (!res.ok) return toast(res.error, true); toast("Запомнил: " + res.repo + ". Проверяю…"); checkAll([S.current]); });
+      };
+      g.appendChild(inp); g.appendChild(save); c2.appendChild(g); d.appendChild(c2);
+    }
+    var acts = el("div"); acts.style.display = "grid"; acts.style.gap = "6px";
+    if (r.update) {
+      var one = el("button", "btn primary", "Обновить только его"); one.onclick = function () { doApply([r.key]); }; acts.appendChild(one);
+      if (r.where && r.where.length > 1) {
+        var every = el("button", "btn", "Обновить во всех папках…"); every.disabled = true; acts.appendChild(every);
+        api().plan_counts(r.group).then(function (pc) {
+          if (pc.folders > 1) {
+            every.textContent = "Обновить во всех папках (" + pc.folders + ")"; every.disabled = false;
+            every.onclick = function () {
+              if (!confirm("Обновить «" + r.name + "» до " + r.update.version + " в " + pc.folders + " " + plural(pc.folders, "папке", "папках", "папках") + "?")) return;
+              applyMany(api().apply_group(r.group));
+            };
+          } else every.remove();
+        });
+      }
+      var sk = el("button", "btn ghost", "Пропустить версию " + r.update.version);
+      sk.onclick = function () { api().skip_version(r.group, r.update.version).then(function () { toast("Версия " + r.update.version + " пропущена"); refreshView(); }); };
+      acts.appendChild(sk);
+    }
+    if (r.id) {
+      var ig = el("button", "btn ghost" + (r.source === "ignored" ? "" : " danger"), r.source === "ignored" ? "Снова проверять этот мод" : "Больше не проверять");
+      ig.onclick = function () { api().ignore(r.id, r.source !== "ignored").then(function () { checkAll([S.current]); }); };
+      acts.appendChild(ig);
+    }
+    var page = (r.update && r.update.page) || r.page;
+    if (page) { var op = el("button", "btn ghost", "Открыть страницу мода"); op.onclick = function () { api().open_url(page); }; acts.appendChild(op); }
+    d.appendChild(acts);
+  }
+
+  function renderStatus() {
+    var s = document.getElementById("statusbar"); s.innerHTML = "";
+    var v = S.view;
+    var a = el("span"); a.appendChild(el("span", "dot")); a.appendChild(document.createTextNode(v && v.checked_at ? "Проверено " + v.checked_at + " · Modrinth + GitHub" : "Ещё не проверялось"));
+    s.appendChild(a);
+    if (v && v.running) s.appendChild(el("span", "warn", "● Игра с этой папкой запущена — обновление применится после перезапуска"));
+    if (v) {
+      var b = el("a", "", "Бэкапы: " + (v.backups || 0)); b.title = v.backup_dir; b.style.marginLeft = "auto";
+      b.onclick = function () { api().open_folder(v.backup_dir); }; s.appendChild(b);
+      var f = el("a", "", "Открыть папку"); f.onclick = function () { api().open_folder(v.path); }; s.appendChild(f);
+      var rm = el("a", "", "Убрать из списка"); rm.onclick = function () { removeFolder(v.path, v.name); }; s.appendChild(rm);
+    }
+  }
+
+  // ── действия ──
+  function removeFolder(path, name) {
+    if (!confirm("Убрать «" + name + "» из списка? Сами моды и папка на диске не тронутся.")) return;
+    api().remove_folder(path).then(function (fs) {
+      S.folders = fs;
+      if (S.current === path) { S.current = null; S.view = null; }
+      renderFolders(); renderMain(); renderDetail(); renderStatus();
+    });
+  }
+  function refreshFolders() { return api().folders().then(function (fs) { S.folders = fs; renderFolders(); }); }
+  function refreshView() { if (S.current) select(S.current); }
+
+  function checkAll(paths) {
+    return run("Проверяю…", api().check(paths || null)).then(function (res) {
+      if (!res.ok) return errorBox("Проверка не удалась", [{ title: "Ошибка", items: [res.error || "неизвестная ошибка"], bad: true }]);
+      S.folders = res.folders; renderFolders();
+      if (res.errors && res.errors.length) errorBox("Не всё удалось проверить", [{ title: "Ошибки", items: res.errors, bad: true }]);
+      if (S.current) select(S.current);
+      else {
+        var f = S.folders.find(function (x) { return x.updates; }) || S.folders[0];
+        if (f) select(f.path);
+      }
+    });
+  }
+
+  function doApply(keys) {
+    run("Обновляю…", api().apply(S.current, keys)).then(function (res) {
+      if (!res.ok && res.error) return errorBox("Обновление не удалось", [{ title: "Ошибка", items: [res.error], bad: true }]);
+      var msg = (res.done && res.done.length ? "Обновлено:\n" + res.done.join("\n") : "") +
+        (res.running ? "\n\nИгра запущена — новые версии подхватятся после перезапуска." : "");
+      if (res.failed && res.failed.length) errorBox("Обновилось не всё", [{ title: "Не вышло", items: res.failed, bad: true }, { title: "Обновлено", items: res.done || [] }]);
+      else toast(msg.trim());
+      refreshFolders(); refreshView();
+    });
+  }
+  function applySelected() { var k = selectedKeys(); if (k.length) doApply(k); }
+
+  function applyMany(promise) {
+    run("Обновляю…", promise).then(function (res) {
+      if (!res.ok && res.error) return errorBox("Обновление не удалось", [{ title: "Ошибка", items: [res.error], bad: true }]);
+      if (res.failed && res.failed.length) { errorBox("Обновилось не всё", [{ title: "Не вышло", items: res.failed, bad: true }, { title: "Обновлено", items: res.done || [] }]); refreshFolders(); refreshView(); return; }
+      var msg = (res.done && res.done.length ? "Обновлено: " + res.done.length + "\n" + res.done.slice(0, 12).join("\n") + (res.done.length > 12 ? "\n…" : "") : "") +
+        (res.failed && res.failed.length ? "\n\nНе вышло:\n" + res.failed.join("\n") : "") +
+        (res.running ? "\n\nГде игра запущена — новые версии подхватятся после перезапуска." : "");
+      toast(msg.trim(), res.failed && res.failed.length);
+      refreshFolders(); refreshView();
+    });
+  }
+
+  function renderUpdateAll() {
+    var total = S.folders.reduce(function (a, f) { return a + (f.updates || 0); }, 0);
+    var n = S.folders.filter(function (f) { return f.updates; }).length;
+    var b = document.getElementById("btn-all");
+    b.hidden = !total;
+    b.textContent = "⇪ Обновить всё везде (" + total + ")";
+    b.onclick = function () {
+      if (!confirm("Обновить все " + total + " " + plural(total, "мод", "мода", "модов") + " в " + n + " " + plural(n, "папке", "папках", "папках") + "? Старые версии уйдут в бэкап каждой папки.")) return;
+      applyMany(api().apply_all());
+    };
+  }
+
+  function rollback() {
+    if (!confirm("Вернуть последнее обновление этой папки? Новые версии уберутся, старые вернутся из бэкапа.")) return;
+    run("Откатываю…", api().rollback(S.current)).then(function (res) {
+      if (!res.ok) return toast(res.error, true);
+      toast("Вернул " + res.restored.length + " " + plural(res.restored.length, "мод", "мода", "модов") + " (обновление от " + res.at + ")");
+      refreshFolders(); refreshView();
+    });
+  }
+
+  function addFolder() {
+    api().pick_folder().then(function (res) {
+      if (!res.ok) return;
+      S.folders = res.folders; renderFolders(); checkAll([res.path]).then(function () { select(res.path); });
+    });
+  }
+
+  function modal(title, build, wide) {
+    var m = document.getElementById("modal"); m.innerHTML = ""; m.className = "modal" + (wide ? " wide" : "");
+    var h = el("header", "", title); var x = el("button", "btn ghost small x", "✕"); x.onclick = closeModal; h.appendChild(x); m.appendChild(h);
+    var c = el("div", "content"); var f = el("footer"); m.appendChild(c); m.appendChild(f);
+    build(c, f); document.getElementById("overlay").classList.add("show");
+  }
+  function closeModal() { document.getElementById("overlay").classList.remove("show"); }
+
+  function discover() {
+    run("Ищу инстансы Prism и MultiMC…", api().discover()).then(function (list) {
+      modal("Найденные инстансы", function (c, f) {
+        if (!list.length) { c.appendChild(el("div", "hint", "Не нашёл Prism или MultiMC. Добавь папку mods вручную.")); return; }
+        var boxes = [];
+        var groups = {};
+        list.forEach(function (i) { (groups[i.launcher] = groups[i.launcher] || []).push(i); });
+        Object.keys(groups).forEach(function (g) {
+          var gh = el("h3", "", LAUNCHERS[g] || g); var mine = [];
+          var tg = el("button", "btn ghost small", "снять все"); tg.type = "button";
+          tg.onclick = function () { var on = tg.textContent === "выбрать все"; mine.forEach(function (b) { if (!b.disabled) b.checked = on; }); tg.textContent = on ? "снять все" : "выбрать все"; };
+          gh.appendChild(tg); c.appendChild(gh);
+          groups[g].forEach(function (i) {
+            var p = el("label", "pick"); var cb = el("input"); cb.type = "checkbox"; cb.checked = !i.added; cb.disabled = i.added;
+            boxes.push([cb, i]); mine.push(cb); p.appendChild(cb); p.appendChild(el("span", "", i.name));
+            p.appendChild(el("span", "m", (i.game || "?") + (i.loader ? " · " + i.loader : "") + (i.added ? " · уже добавлен" : "")));
+            c.appendChild(p);
+          });
+        });
+        var cancel = el("button", "btn ghost", "Отмена"); cancel.onclick = closeModal; f.appendChild(cancel);
+        var ok = el("button", "btn primary", "Добавить и проверить");
+        ok.onclick = function () {
+          var paths = boxes.filter(function (b) { return b[0].checked && !b[0].disabled; }).map(function (b) { return b[1].path; });
+          closeModal(); if (!paths.length) return;
+          api().add_discovered(paths).then(function (res) { S.folders = res.folders; renderFolders(); checkAll(paths); });
+        };
+        f.appendChild(ok);
+      });
+    });
+  }
+
+  // ── перенос на другую версию игры ──
+  var MG_LABEL = { ready: "новая версия", beta: "бета", same: "подходит как есть", manual: "проверь сам",
+    missing: "нет сборки", error: "ошибка", skip: "пропуск" };
+
+  function migrateStart() {
+    var v = S.view;
+    run("Загружаю список версий Minecraft…", api().migrate_targets()).then(function (t) {
+      modal("Перенос на другую версию — " + v.name, function (c, f) {
+        c.appendChild(el("div", "hint", "Сейчас: Minecraft " + (v.game || "?") + " · " + (v.loader || "fabric") +
+          ". Подберу каждый мод под новую версию (Modrinth и GitHub) и скачаю в отдельную папку — эта папка не изменится."));
+        var fld = el("div", "field"); fld.appendChild(el("label", "", "Версия Minecraft, на которую переходишь"));
+        var row = el("div", "inline"); row.style.marginTop = "0";
+        var inp = el("input"); inp.setAttribute("list", "mg-versions"); inp.placeholder = "например 26.2";
+        var dl = el("datalist"); dl.id = "mg-versions";
+        (t.versions || []).forEach(function (x) { var o = el("option"); o.value = x; dl.appendChild(o); });
+        var vs = t.versions || [];
+        var idx = vs.indexOf(v.game);
+        inp.value = idx > 0 ? vs[idx - 1] : (vs[0] && vs[0] !== v.game ? vs[0] : "");
+        row.appendChild(inp); fld.appendChild(row); fld.appendChild(dl); c.appendChild(fld);
+        if (!t.ok) c.appendChild(el("div", "hint", "Список версий не загрузился (" + t.error + ") — впиши версию вручную."));
+        var cancel = el("button", "btn ghost", "Отмена"); cancel.onclick = closeModal; f.appendChild(cancel);
+        var ok = el("button", "btn primary", "Подобрать моды");
+        ok.onclick = function () {
+          var target = inp.value.trim(); if (!target) return toast("Укажи версию", true);
+          if (target === v.game) return toast("Это текущая версия папки", true);
+          run("Подбираю моды под " + target + "…", api().migrate_plan(S.current, target)).then(function (plan) {
+            if (!plan.ok) return toast(plan.error || "Не получилось", true);
+            migratePlan(plan);
+          });
+        };
+        f.appendChild(ok);
+        inp.onkeydown = function (e) { if (e.key === "Enter") ok.click(); };
+        setTimeout(function () { inp.focus(); inp.select(); }, 30);
+      });
+    });
+  }
+
+  function migratePlan(plan) {
+    var dest = null;   // выбрать явно: среди инстансов этой версии могут быть чужие сборки
+    modal("Под Minecraft " + plan.target + " — " + plan.name, function (c, f) {
+      var cnt = {};
+      plan.rows.forEach(function (r) { cnt[r.status] = (cnt[r.status] || 0) + 1; });
+      var sum = el("div", "mg-sum");
+      ["ready", "beta", "same", "manual", "missing", "error", "skip"].forEach(function (k) {
+        if (cnt[k]) { var sp = el("span", "", MG_LABEL[k] + ": " + cnt[k]); sum.appendChild(sp); }
+      });
+      c.appendChild(sum);
+
+      var boxes = [];
+      var gh = el("h3", "", "Моды (" + plan.rows.length + ")"); c.appendChild(gh);
+      plan.rows.forEach(function (r) {
+        var line = el("label", "mg-row");
+        var cb = el("input"); cb.type = "checkbox"; cb.checked = !!r.sel;
+        cb.disabled = !(r.to || r.status === "same"); cb.onchange = upd;
+        boxes.push([cb, r]);
+        var nm = el("span", "nm"); nm.textContent = (r.dep ? "＋ " : "") + r.name;
+        nm.appendChild(el("span", "st " + r.status, MG_LABEL[r.status] || r.status));
+        var vv = el("span", "vv");
+        vv.textContent = r.to ? (r.version ? r.version + " → " : "") + r.to.version : (r.version || "");
+        line.appendChild(cb); line.appendChild(nm); line.appendChild(vv);
+        if (r.note) line.appendChild(el("div", "note", r.note));
+        c.appendChild(line);
+      });
+
+      var extraBoxes = [];
+      if (plan.extras && plan.extras.length) {
+        c.appendChild(el("h3", "", "Перенести из старой папки игры"));
+        plan.extras.forEach(function (x) {
+          var l = el("label", "pick"); var cb = el("input"); cb.type = "checkbox"; cb.checked = true;
+          extraBoxes.push([cb, x]); l.appendChild(cb); l.appendChild(el("span", "", x.label));
+          l.appendChild(el("span", "m", x.files + " " + plural(x.files, "файл", "файла", "файлов") + " · " + fmtSize(x.size)));
+          c.appendChild(l);
+        });
+        c.appendChild(el("div", "hint", "Что в новой папке уже есть и отличается — уберу в бэкап, «Откат» вернёт как было."));
+      }
+
+      c.appendChild(el("h3", "", "Куда скачать"));
+      var box = el("div", "dest"); c.appendChild(box);
+      function renderDest() {
+        box.innerHTML = "";
+        if (plan.suggest.length) {
+          var sel = el("select");
+          var none = el("option"); none.value = ""; none.textContent = "— выбери инстанс " + plan.target + " —"; none.disabled = true;
+          if (!dest) none.selected = true; sel.appendChild(none);
+          plan.suggest.forEach(function (s0, i) {
+            var o = el("option"); o.value = String(i);
+            o.textContent = s0.name + " (" + (LAUNCHERS[s0.launcher] || s0.launcher) + ", модов: " + s0.jars + ")";
+            if (dest && dest.path === s0.path) o.selected = true; sel.appendChild(o);
+          });
+          var other = el("option"); other.value = "other"; other.textContent = "Другая папка…";
+          if (dest && !plan.suggest.some(function (s0) { return s0.path === dest.path; })) other.selected = true;
+          sel.appendChild(other);
+          sel.onchange = function () {
+            if (sel.value === "other") return pick();
+            var s0 = plan.suggest[Number(sel.value)]; dest = { path: s0.path, jars: s0.jars }; renderDest(); upd();
+          };
+          box.appendChild(sel);
+        } else {
+          box.appendChild(el("div", "hint", "Не нашёл инстанс Prism/MultiMC с Minecraft " + plan.target + " и " + plan.loader +
+            ". Создай его в лаунчере (или выбери любую пустую папку)."));
+        }
+        var line = el("div", "inline"); line.style.marginTop = "0";
+        var pth = el("div", "path", dest ? dest.path : "папка не выбрана"); pth.style.flex = "1";
+        var pb = el("button", "btn small", "Выбрать папку…"); pb.type = "button"; pb.onclick = pick;
+        line.appendChild(pth); line.appendChild(pb); box.appendChild(line);
+        if (dest && !dest.exists) box.appendChild(el("div", "hint", "Папки mods там нет — создам её: " + dest.path));
+        else if (dest && dest.picked && dest.picked !== dest.path) box.appendChild(el("div", "hint", "Моды лягут в " + dest.path));
+        if (dest && dest.jars) box.appendChild(el("div", "hint", "⚠ Там уже " + dest.jars + " " + plural(dest.jars, "мод", "мода", "модов") +
+          " — уберу их в бэкап (modup-backup рядом с папкой), «Откат» вернёт как было."));
+      }
+      function pick() {
+        api().pick_dest().then(function (d) { if (d && d.path) dest = d; renderDest(); upd(); });
+      }
+      renderDest();
+
+      var cancel = el("button", "btn ghost", "Назад"); cancel.onclick = migrateStart; f.appendChild(cancel);
+      var ok = el("button", "btn primary", ""); f.appendChild(ok);
+      function upd() {
+        var n = boxes.filter(function (b) { return b[0].checked; }).length;
+        ok.textContent = "Скачать " + n + " " + plural(n, "мод", "мода", "модов");
+        ok.disabled = !n || !dest;
+      }
+      upd();
+      ok.onclick = function () {
+        var keys = boxes.filter(function (b) { return b[0].checked; }).map(function (b) { return b[1].key; });
+        var extras = extraBoxes.filter(function (b) { return b[0].checked; }).map(function (b) { return b[1].key; });
+        run("Скачиваю моды под " + plan.target + "…", api().migrate_apply(dest.path, keys, extras)).then(function (res) {
+          if (!res.ok) return errorBox("Перенос не удался", [{ title: res.error ? "Ошибка" : "Не скачались", items: res.error ? [res.error] : (res.failed || []), bad: true }],
+            { report: res.report, folder: res.dest });
+          if (res.folders) { S.folders = res.folders; renderFolders(); }
+          var msg = "Готово: " + res.done.length + " " + plural(res.done.length, "мод", "мода", "модов") + " в " + res.dest;
+          if (res.moved) msg += "\nСтарые моды папки (" + res.moved + ") — в бэкапе";
+          if (res.failed.length) msg += "\nНе скачались: " + res.failed.join("; ");
+          if (res.settings && res.settings.length) msg += "\nПеренесено: " + res.settings.join("; ");
+          if (res.left.length) msg += "\nНет под " + plan.target + ": " + res.left.join(", ");
+          if (res.failed.length || res.left.length) {
+            errorBox("Перенос прошёл не полностью", [
+              { title: "Не скачались", items: res.failed, bad: true },
+              { title: "Нет сборки под " + plan.target + " — найди и поставь сам", items: res.left, bad: true },
+              { title: "Перенесено из настроек", items: res.settings || [] }],
+              { ok: "Перенесено модов: " + res.done.length + " в " + res.dest, report: res.report, folder: res.dest });
+          } else {
+            if (res.report) msg += "\nОтчёт: " + res.report;
+            toast(msg);
+          }
+          select(res.dest);
+        });
+      };
+    }, true);
+  }
+
+  // ── экспорт модов ──
+  function exportMods() {
+    api().export_info(S.current).then(function (info) {
+      modal("Экспорт модов — " + info.name, function (c, f) {
+        c.appendChild(el("div", "hint", "Только моды, без настроек и остального из папки игры. Minecraft " + (info.game || "?") + " · " + info.loader + (info.loader_version ? " " + info.loader_version : "")));
+        var fmt = "zip";
+        var fwrap = el("div"); fwrap.style.display = "grid"; fwrap.style.gap = "4px";
+        [["zip", "Архив модов (.zip)", "просто jar-файлы — распаковать в папку mods"],
+         ["mrpack", "Для лаунчера (.mrpack)", "Prism / Modrinth App сами создадут инстанс с этими модами; моды с Modrinth — ссылками, файл маленький"]].forEach(function (o) {
+          var l = el("label", "pick"); var rb = el("input"); rb.type = "radio"; rb.name = "fmt"; rb.value = o[0]; rb.checked = o[0] === fmt;
+          rb.onchange = function () { fmt = o[0]; nameRow.hidden = fmt !== "mrpack"; };
+          var t = el("span"); t.appendChild(el("b", "", o[1])); t.appendChild(el("div", "hint", o[2])); t.style.whiteSpace = "normal";
+          l.appendChild(rb); l.appendChild(t); fwrap.appendChild(l);
+        });
+        c.appendChild(fwrap);
+        var nameRow = el("div", "field"); nameRow.hidden = true;
+        nameRow.appendChild(el("label", "", "Название и версия сборки (видно при импорте)"));
+        var nr = el("div", "inline"); nr.style.marginTop = "0";
+        var nm = el("input"); nm.value = info.name; var ver = el("input"); ver.value = "1.0"; ver.style.flex = "0 0 80px";
+        nr.appendChild(nm); nr.appendChild(ver); nameRow.appendChild(nr); c.appendChild(nameRow);
+
+        var gh = el("h3", "", "Моды (" + info.mods.length + ")"); var boxes = [];
+        var tg = el("button", "btn ghost small", "снять все"); tg.type = "button";
+        tg.onclick = function () { var on = tg.textContent === "выбрать все"; boxes.forEach(function (b) { b[0].checked = on; }); tg.textContent = on ? "снять все" : "выбрать все"; upd(); };
+        gh.appendChild(tg); c.appendChild(gh);
+        info.mods.forEach(function (m) {
+          var l = el("label", "pick"); var cb = el("input"); cb.type = "checkbox"; cb.checked = !m.private; cb.onchange = upd;
+          boxes.push([cb, m]); l.appendChild(cb); l.appendChild(el("span", "", m.name));
+          l.appendChild(el("span", "m", m.private ? "личный — выключен" : (m.link ? "Modrinth" : m.source === "github" ? "GitHub" : "файл")));
+          c.appendChild(l);
+        });
+        var cancel = el("button", "btn ghost", "Отмена"); cancel.onclick = closeModal; f.appendChild(cancel);
+        var ok = el("button", "btn primary", "Сохранить…"); f.appendChild(ok);
+        function upd() { var n = boxes.filter(function (b) { return b[0].checked; }).length; ok.textContent = "Сохранить " + n + " " + plural(n, "мод", "мода", "модов") + "…"; ok.disabled = !n; }
+        upd();
+        ok.onclick = function () {
+          var keys = boxes.filter(function (b) { return b[0].checked; }).map(function (b) { return b[1].key; });
+          closeModal();
+          api().export_pack(S.current, nm.value.trim(), ver.value.trim(), keys, fmt).then(function (res) {
+            if (res.cancelled) return;
+            if (!res.ok) return toast(res.error || "Не удалось сохранить", true);
+            var kb = Math.round(res.size / 1024);
+            toast("Сохранено: " + res.path + "\n" + (res.fmt === "mrpack"
+              ? res.linked + " ссылками с Modrinth, " + res.embedded + " файлами внутри · " + kb + " КБ"
+              : res.embedded + " " + plural(res.embedded, "мод", "мода", "модов") + " · " + kb + " КБ"));
+          });
+        };
+      });
+    });
+  }
+
+  function settings() {
+    api().get_settings().then(function (st) {
+      modal("Настройки", function (c, f) {
+        var pre = el("label", "pick"); var cb = el("input"); cb.type = "checkbox"; cb.checked = st.allow_pre;
+        pre.appendChild(cb); pre.appendChild(el("span", "", "Предлагать бета- и альфа-версии (если сейчас стоит релиз)")); c.appendChild(pre);
+        var fl = el("div", "field"); fl.appendChild(el("label", "", "Токен GitHub (необязательно) — без него GitHub даёт 60 проверок в час"));
+        var tok = el("input"); tok.type = "password"; tok.placeholder = st.has_token ? "токен сохранён — введи новый, чтобы заменить" : "ghp_…"; fl.appendChild(tok); c.appendChild(fl);
+        c.appendChild(el("div", "hint", "Не проверяются: " + (st.ignore || []).join(", ")));
+        var cancel = el("button", "btn ghost", "Отмена"); cancel.onclick = closeModal; f.appendChild(cancel);
+        var ok = el("button", "btn primary", "Сохранить");
+        ok.onclick = function () { api().set_settings(cb.checked, tok.value ? tok.value : null).then(function () { closeModal(); toast("Сохранено"); }); };
+        f.appendChild(ok);
+      });
+    });
+  }
+
+  document.getElementById("btn-add").onclick = addFolder;
+  document.getElementById("btn-discover").onclick = discover;
+  document.getElementById("btn-settings").onclick = settings;
+  document.getElementById("overlay").addEventListener("click", function (e) { if (e.target.id === "overlay" && !pollTimer) closeModal(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && document.getElementById("overlay").classList.contains("show") && !document.querySelector(".spinner")) closeModal(); });
+
+  // ── обновление самого ModUp (релизы на GitHub) ──
+  function checkSelfUpdate() {
+    api().update_check().then(function (u) {
+      if (!u || !u.available) return;
+      var bar = document.getElementById("updbar"); bar.innerHTML = "";
+      bar.appendChild(el("span", "txt", "Доступна новая версия ModUp " + u.version + " (у тебя " + u.current + ")" +
+        (u.notes ? " — " + u.notes.split("\n")[0].replace(/^[-*#\s]+/, "") : "")));
+      var what = el("button", "btn ghost small", "Что нового"); what.type = "button";
+      what.onclick = function () {
+        modal("ModUp " + u.version, function (c, f) {
+          c.appendChild(el("div", "notes", u.notes || "Описание не указано."));
+          var pg = el("button", "btn ghost", "Страница релиза"); pg.onclick = function () { api().open_url(u.page); }; f.appendChild(pg);
+          var ok = el("button", "btn primary", "Обновить"); ok.onclick = function () { closeModal(); doSelfUpdate(u); }; f.appendChild(ok);
+        });
+      };
+      var go = el("button", "btn primary small", "Обновить"); go.type = "button"; go.onclick = function () { doSelfUpdate(u); };
+      var later = el("button", "btn ghost small", "Позже"); later.type = "button"; later.onclick = function () { bar.hidden = true; };
+      bar.appendChild(what); bar.appendChild(go); bar.appendChild(later); bar.hidden = false;
+    });
+  }
+  function doSelfUpdate(u) {
+    if (!u.can_apply) { api().open_url(u.page); return; }   // запуск не из exe — просто страница релиза
+    run("Скачиваю ModUp " + u.version + "…", api().update_apply()).then(function (res) {
+      if (!res.ok) return errorBox("Обновить ModUp не удалось", [{ title: "Ошибка", items: [res.error || "неизвестная"], bad: true }],
+        { ok: "Осталась текущая версия — ею можно пользоваться. Новую можно скачать вручную со страницы релиза." });
+      busy("ModUp " + res.version + " установлен — перезапускаюсь…");
+    });
+  }
+
+  function start() {
+    api().init().then(function (st) {
+      S.folders = st.folders; S.settings = st.settings;
+      if (st.version) document.querySelector(".brand").appendChild(el("span", "ver", st.version));
+      setTimeout(checkSelfUpdate, 1500);
+      renderFolders(); renderMain(); renderDetail(); renderStatus();
+      if (S.folders.length) checkAll();
+    });
+  }
+  // Сбой в самом окне (ошибка кода, не ответ ядра) — тоже показываем, а не молчим.
+  window.addEventListener("error", function (e) { errorBox("Ошибка в окне ModUp", [{ title: "Ошибка", items: [String(e.message || e.error || e)], bad: true }]); });
+  window.addEventListener("unhandledrejection", function (e) { if (e.reason && e.reason.shown) return; errorBox("Ошибка в окне ModUp", [{ title: "Ошибка", items: [String(e.reason && e.reason.message || e.reason || "неизвестная")], bad: true }]); });
+  if (window.pywebview && window.pywebview.api) start(); else window.addEventListener("pywebviewready", start);
+})();
+</script>
+</body>
+</html>
