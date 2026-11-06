@@ -449,7 +449,7 @@ class Engine:
         bdir = os.path.join(self.backup_root(path), stamp)
         tmpdir = os.path.join(self.backup_root(path), ".download")
         os.makedirs(tmpdir, exist_ok=True)
-        done, failed, manifest = [], [], []
+        done, failed, manifest, failed_keys = [], [], [], []
         for i, r in enumerate(todo, 1):
             u = r["update"]
             self._set_progress(f"Скачиваю {r['name']} ({i}/{len(todo)})…")
@@ -467,6 +467,7 @@ class Engine:
                 done.append(f"{r['name']} {r['version']} → {u['version']}")
             except Exception as e:  # одна неудача не ломает остальные
                 failed.append(f"{r['name']}: {e}")
+                failed_keys.append(r["key"])
         if manifest:
             with open(os.path.join(bdir, "manifest.json"), "w", encoding="utf-8") as fh:
                 json.dump({"at": _now_iso(), "items": manifest}, fh, ensure_ascii=False, indent=2)
@@ -474,15 +475,17 @@ class Engine:
         self.progress = {"busy": False, "text": ""}
         if done and recheck:
             self.check(only=[path])
-        return {"ok": bool(done), "done": done, "failed": failed, "running": running}
+        return {"ok": bool(done), "done": done, "failed": failed, "failed_keys": failed_keys, "running": running}
 
     def apply_many(self, plan):
         """plan: {путь папки: [ключи]} — обновить сразу в нескольких папках (мод во всех, или всё везде)."""
-        done, failed, running = [], [], False
+        done, failed, running, retry = [], [], False, {}
         for path, keys in plan.items():
             if not keys:
                 continue
             res = self.apply(path, keys, recheck=False)
+            if res.get("failed_keys"):
+                retry[path] = res["failed_keys"]   # «Повторить» — только то, что не скачалось
             name = (self.folders.get(path) or scan.describe_folder(path)).name
             if res.get("error"):
                 failed.append(f"{name}: {res['error']}")
@@ -493,7 +496,7 @@ class Engine:
         touched = [p for p, k in plan.items() if k]
         if done and touched:
             self.check(only=touched)   # одна перепроверка на все папки, а не по папке за раз
-        return {"ok": bool(done), "done": done, "failed": failed, "running": running}
+        return {"ok": bool(done), "done": done, "failed": failed, "running": running, "retry": retry}
 
     def plan_group(self, group):
         """Где этот мод можно обновить: {путь: [ключ]}."""
@@ -503,7 +506,26 @@ class Engine:
     def plan_all(self):
         return {p: [r["key"] for r in rows if r["update"]] for p, rows in self.rows.items() if any(r["update"] for r in rows)}
 
+    DOWNLOAD_TRIES = 3
+
     def _download(self, u, dest):
+        """Скачать с проверкой отпечатка; разрыв связи — ещё пара попыток, недокачанный файл не остаётся."""
+        last = None
+        for attempt in range(self.DOWNLOAD_TRIES):
+            if attempt:
+                time.sleep(2 * attempt)
+            try:
+                self._download_once(u, dest)
+                return
+            except (OSError, RuntimeError) as e:   # URLError, таймаут, обрыв, IncompleteRead, битый файл
+                last = e
+                try:
+                    os.remove(dest)
+                except OSError:
+                    pass
+        raise RuntimeError(f"не скачался ({self.DOWNLOAD_TRIES} попытки): {getattr(last, 'reason', None) or last}")
+
+    def _download_once(self, u, dest):
         req = urllib.request.Request(u["url"], headers={"User-Agent": sources.UA})
         h512, h256, h1 = hashlib.sha512(), hashlib.sha256(), hashlib.sha1()
         with urllib.request.urlopen(req, timeout=60) as resp, open(dest, "wb") as out:
@@ -514,14 +536,28 @@ class Engine:
                 out.write(chunk)
                 h512.update(chunk); h256.update(chunk); h1.update(chunk)
         if u.get("sha512") and h512.hexdigest() != u["sha512"]:
-            os.remove(dest)
             raise RuntimeError("файл скачался с ошибкой (не сошёлся отпечаток)")
         if u.get("sha256") and h256.hexdigest() != u["sha256"]:
-            os.remove(dest)
             raise RuntimeError("файл скачался с ошибкой (не сошёлся отпечаток)")
         if u.get("size") and os.path.getsize(dest) != u["size"]:
-            os.remove(dest)
             raise RuntimeError("файл скачался не целиком")
+
+    @staticmethod
+    def _same_file(fp, u):
+        """Лежащий файл — ровно тот, что надо скачать (по размеру и отпечатку)? Тогда качать не нужно."""
+        try:
+            if not os.path.isfile(fp) or (u.get("size") and os.path.getsize(fp) != u["size"]):
+                return False
+            algo = "sha512" if u.get("sha512") else "sha256" if u.get("sha256") else "sha1" if u.get("sha1") else ""
+            if not algo:
+                return bool(u.get("size"))
+            h = hashlib.new(algo)
+            with open(fp, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 16), b""):
+                    h.update(chunk)
+            return h.hexdigest() == u[algo]
+        except OSError:
+            return False
 
     def rollback(self, path):
         """Вернуть последнее обновление этой папки."""
@@ -958,9 +994,11 @@ class Engine:
         dest = resolve_mods_dir(picked)
         return {"path": dest, "picked": picked, "jars": self._jar_count(dest), "exists": os.path.isdir(dest)}
 
-    def migrate_apply(self, dest, keys, extras=None):
+    def migrate_apply(self, dest, keys, extras=None, retry=False):
         """Скачать выбранное в папку dest. Стоявшие там jar — в бэкап (откат вернёт как было).
-        extras — ключи SETTINGS_ITEMS: что ещё перенести из папки игры (настройки, серверы, паки…)."""
+        extras — ключи SETTINGS_ITEMS: что ещё перенести из папки игры (настройки, серверы, паки…).
+        Уже лежащий в dest нужный файл (тот же отпечаток) не перекачивается — повторный перенос после
+        обрыва связи качает только недостающее. retry=True — «Докачать»: только keys, остальное в папке не трогаем."""
         mg = getattr(self, "_migration", None)
         if not mg:
             return {"ok": False, "error": "Сначала подбери моды"}
@@ -979,33 +1017,60 @@ class Engine:
         bdir = os.path.join(self.backup_root(dest), stamp)
         tmpdir = os.path.join(self.backup_root(dest), ".download")
         os.makedirs(tmpdir, exist_ok=True)
+
+        def want(r):   # что должно лечь в dest: (имя файла, описание для сверки)
+            if r["status"] == "same":
+                fp = os.path.join(src, r["key"])
+                try:
+                    return r["key"], {"size": os.path.getsize(fp), "sha1": self._sha1_of(fp)}
+                except OSError:
+                    return r["key"], None
+            return r["to"]["filename"], r["to"]
+
+        wanted = {r["key"]: want(r) for r in todo}
+        have = set()   # ключи, чей файл уже лежит в dest целым
+        for r in todo:
+            name, u = wanted[r["key"]]
+            if u and self._same_file(os.path.join(dest, name), u):
+                have.add(r["key"])
+        keep_names = {wanted[k][0].lower() for k in have}
         moved = []
-        for n in sorted(os.listdir(dest)):
-            if n.lower().endswith(".jar") and os.path.isfile(os.path.join(dest, n)):
-                os.makedirs(bdir, exist_ok=True)
-                shutil.move(os.path.join(dest, n), os.path.join(bdir, n))
-                moved.append({"old": n, "new": ""})
-        done, failed, added = [], [], []
+        if not retry:
+            for n in sorted(os.listdir(dest)):
+                if n.lower().endswith(".jar") and os.path.isfile(os.path.join(dest, n)) and n.lower() not in keep_names:
+                    os.makedirs(bdir, exist_ok=True)
+                    shutil.move(os.path.join(dest, n), os.path.join(bdir, n))
+                    moved.append({"old": n, "new": ""})
+        done, failed, added, failed_keys, kept = [], [], [], [], []
         for i, r in enumerate(todo, 1):
+            if r["key"] in have:
+                kept.append(r["name"])
+                done.append(f"{r['name']} — уже был скачан")
+                continue
             self._set_progress(f"Скачиваю {r['name']} ({i}/{len(todo)})…")
             try:
+                name = wanted[r["key"]][0]
+                fp = os.path.join(dest, name)
+                if os.path.exists(fp):   # «Докачать»: на месте битый/другой файл с тем же именем — в бэкап
+                    os.makedirs(bdir, exist_ok=True)
+                    shutil.move(fp, os.path.join(bdir, name))
+                    moved.append({"old": name, "new": ""})
                 if r["status"] == "same":
-                    name = r["key"]
-                    shutil.copy2(os.path.join(src, name), os.path.join(dest, name))
+                    shutil.copy2(os.path.join(src, name), fp)
                     done.append(f"{r['name']} {r['version']} (тот же файл)")
                 else:
                     u = r["to"]
-                    name = u["filename"]
                     tmp = os.path.join(tmpdir, name)
                     self._download(u, tmp)
-                    shutil.move(tmp, os.path.join(dest, name))
+                    shutil.move(tmp, fp)
                     done.append(f"{r['name']} → {u['version']}")
                 added.append(name)
             except Exception as e:  # одна неудача не ломает остальные
                 failed.append(f"{r['name']}: {e}")
+                failed_keys.append(r["key"])
         settings_done, settings_man = [], []
         src_game, dst_game = game_dir_of(src), game_dir_of(dest)
-        if extras and src_game and dst_game and os.path.normcase(src_game) != os.path.normcase(dst_game):
+        if extras and not retry and src_game and dst_game and os.path.normcase(src_game) != os.path.normcase(dst_game):
             self._set_progress("Переношу настройки, серверы, паки и скриншоты…")
             settings_done, s_failed, settings_man = self._copy_settings(src_game, dst_game, set(extras), bdir)
             failed += s_failed
@@ -1014,7 +1079,7 @@ class Engine:
             with open(os.path.join(bdir, "manifest.json"), "w", encoding="utf-8") as fh:
                 json.dump({"at": _now_iso(), "kind": "migrate", "from": src, "target": mg["target"],
                            "items": moved, "added": added, "settings": settings_man}, fh, ensure_ascii=False, indent=2)
-            self._write_report(bdir, mg, keys, done, failed, settings_done)
+            self._write_report(bdir, mg, keys, done, failed, settings_done, retry=retry)
         shutil.rmtree(tmpdir, ignore_errors=True)
         self.progress = {"busy": False, "text": ""}
         known = {os.path.normcase(os.path.normpath(p)) for p in self.cfg["folders"]}
@@ -1023,23 +1088,32 @@ class Engine:
         if not scan.describe_folder(dest, self._launcher_of(dest)).game_version:
             self.cfg["game_version"][dest] = mg["target"]   # папка не из инстанса — версию игры не угадать
             self.cfg.save()
-        left = sorted(r["name"] for r in mg["rows"].values()
-                      if r["key"] not in keys and r["status"] in ("missing", "error", "manual"))
-        return {"ok": bool(done), "done": done, "failed": failed, "moved": len(moved), "dest": dest, "left": left,
-                "settings": settings_done, "report": os.path.join(bdir, "report.txt") if os.path.isdir(bdir) else ""}
+        left = [] if retry else sorted(r["name"] for r in mg["rows"].values()
+                                       if r["key"] not in keys and r["status"] in ("missing", "error", "manual"))
+        return {"ok": bool(done), "done": done, "failed": failed, "failed_keys": failed_keys, "kept": len(kept),
+                "moved": len(moved), "dest": dest, "left": left, "settings": settings_done, "retry": retry,
+                "report": os.path.join(bdir, "report.txt") if os.path.isdir(bdir) else ""}
 
     @staticmethod
-    def _write_report(bdir, mg, keys, done, failed, settings_done):
+    def _sha1_of(fp):
+        h = hashlib.sha1()
+        with open(fp, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 16), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    @staticmethod
+    def _write_report(bdir, mg, keys, done, failed, settings_done, retry=False):
         """Отчёт переноса рядом с бэкапом: что перенесено, что нет и почему — можно переслать, если что-то не так."""
         chosen = set(keys)
-        lines = [f"ModUp — перенос на Minecraft {mg['target']} ({mg['loader']}), {_now_iso()}",
+        lines = [f"ModUp — {'докачка' if retry else 'перенос'} на Minecraft {mg['target']} ({mg['loader']}), {_now_iso()}",
                  f"Откуда: {mg['path']}", ""]
         lines += ["Перенесено:"] + [f"  + {x}" for x in done] + [""]
         if settings_done:
             lines += ["Настройки и файлы:"] + [f"  + {x}" for x in settings_done] + [""]
         if failed:
             lines += ["Не вышло:"] + [f"  ! {x}" for x in failed] + [""]
-        rest = [r for r in mg["rows"].values() if r["key"] not in chosen]
+        rest = [] if retry else [r for r in mg["rows"].values() if r["key"] not in chosen]
         if rest:
             lines.append("Не перенесено:")
             for r in sorted(rest, key=lambda r: r["name"].lower()):

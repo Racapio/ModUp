@@ -129,6 +129,10 @@ class Api:
         """Обновить всё во всех проверенных папках."""
         return self._locked(lambda: self._engine.apply_many(self._engine.plan_all()))
 
+    def apply_plan(self, plan):
+        """Повторить обновление по готовому плану {папка: [ключи]} — то, что в прошлый раз не скачалось."""
+        return self._locked(lambda: self._engine.apply_many(plan or {}))
+
     def plan_counts(self, group=None):
         plan = self._engine.plan_group(group) if group else self._engine.plan_all()
         return {"folders": len(plan), "mods": sum(len(v) for v in plan.values())}
@@ -181,9 +185,9 @@ class Api:
     def dest_info(self, path):
         return self._engine.dest_info(path)
 
-    def migrate_apply(self, dest, keys, extras=None):
+    def migrate_apply(self, dest, keys, extras=None, retry=False):
         def go():
-            res = self._engine.migrate_apply(dest, keys or [], extras or [])
+            res = self._engine.migrate_apply(dest, keys or [], extras or [], bool(retry))
             if res.get("done"):
                 self._engine.check(only=[res["dest"]])
                 res["folders"] = self._engine.folder_list()

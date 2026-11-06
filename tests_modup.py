@@ -149,6 +149,65 @@ check("по id: Sodium и Essential (essential-container) найдены", {"sod
 check("по id: чужой проект с тем же коротким id не берём", "iq.jar" not in found)
 check("по id: тот же id и название, но другой GitHub — не берём", "chatplus-2.9.0.jar" not in found)
 
+# перенос: обрыв связи → «Докачать» качает только не скачавшиеся, повторный перенос не перекачивает целые файлы
+import hashlib as _hl
+with tempfile.TemporaryDirectory() as td:
+    src = os.path.join(td, "old", "mods"); dst = os.path.join(td, "new", "mods"); os.makedirs(src); os.makedirs(dst)
+    open(os.path.join(src, "same.jar"), "wb").write(b"same")
+    open(os.path.join(dst, "junk.jar"), "wb").write(b"junk")
+    body = {n: n.encode() * 50 for n in ("a.jar", "b.jar", "c.jar")}
+    def to(n): return {"url": "x://" + n, "filename": n, "version": "2", "type": "release", "size": len(body[n]),
+                       "sha512": _hl.sha512(body[n]).hexdigest()}
+    rows = {k: {"key": k, "name": k, "version": "1", "status": "ready", "note": "", "to": to(k)} for k in body}
+    rows["same.jar"] = {"key": "same.jar", "name": "same", "version": "1", "status": "same", "note": "", "to": None}
+    e = en.Engine(); e._migration = {"path": src, "target": "26.2", "loader": "fabric", "rows": rows}
+    calls, offline = [], {"b.jar", "c.jar"}
+    def fake_dl(u, dest):
+        calls.append(u["filename"])
+        if u["filename"] in offline:
+            raise RuntimeError("не скачался (3 попытки): нет связи")
+        open(dest, "wb").write(body[u["filename"]])
+    e._download = fake_dl
+    keys = ["a.jar", "b.jar", "c.jar", "same.jar"]
+    r1 = e.migrate_apply(dst, keys)
+    check("обрыв: не скачавшиеся отданы ключами", sorted(r1["failed_keys"]) == ["b.jar", "c.jar"], r1["failed_keys"])
+    check("обрыв: скачанное на месте, старое в бэкапе", sorted(os.listdir(dst)) == ["a.jar", "same.jar"], os.listdir(dst))
+    offline.discard("b.jar"); calls.clear()
+    r2 = e.migrate_apply(dst, r1["failed_keys"], retry=True)
+    check("Докачать: качает только не скачавшиеся", sorted(calls) == ["b.jar", "c.jar"], calls)
+    check("Докачать: уже скачанное не трогает", sorted(os.listdir(dst)) == ["a.jar", "b.jar", "same.jar"] and r2["moved"] == 0, (os.listdir(dst), r2["moved"]))
+    check("Докачать: снова не вышедший — снова в failed_keys", r2["failed_keys"] == ["c.jar"], r2["failed_keys"])
+    offline.clear(); calls.clear()
+    r3 = e.migrate_apply(dst, keys)
+    check("перенос заново: целые файлы не перекачивает", calls == ["c.jar"] and r3["kept"] == 3, (calls, r3["kept"]))
+    check("перенос заново: всё на месте, ничего в бэкап", sorted(os.listdir(dst)) == ["a.jar", "b.jar", "c.jar", "same.jar"] and r3["moved"] == 0,
+          (os.listdir(dst), r3["moved"]))
+    open(os.path.join(dst, "a.jar"), "wb").write(b"broken"); calls.clear()
+    e.migrate_apply(dst, keys)
+    check("перенос заново: битый файл перекачивается", calls == ["a.jar"] and open(os.path.join(dst, "a.jar"), "rb").read() == body["a.jar"], calls)
+
+# скачивание: обрыв — повтор, недокачанный файл не остаётся
+import urllib.request as _ur
+with tempfile.TemporaryDirectory() as td:
+    e = en.Engine(); e.DOWNLOAD_TRIES = 3
+    n = {"i": 0}
+    def flaky(u, dest):
+        n["i"] += 1
+        open(dest, "wb").write(b"part")
+        if n["i"] < 3:
+            raise OSError("connection reset")
+    e._download_once = flaky
+    _sleep = en.time.sleep; en.time.sleep = lambda x: None
+    e._download({"filename": "z.jar"}, os.path.join(td, "z.jar"))
+    check("скачивание: после двух обрывов третья попытка удалась", n["i"] == 3)
+    n["i"] = -10
+    try:
+        e._download({"filename": "z.jar"}, os.path.join(td, "y.jar")); ok = False
+    except RuntimeError as ex:
+        ok = "3 попытки" in str(ex) and not os.path.exists(os.path.join(td, "y.jar"))
+    en.time.sleep = _sleep
+    check("скачивание: три обрыва — понятная ошибка, обрывка нет", ok)
+
 # самообновление: сравнение версий
 from modup import updater as up
 check("обнова: v1.4.1 новее 1.4.0", up.is_newer("v1.4.1", "1.4.0"))

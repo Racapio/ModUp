@@ -239,7 +239,8 @@
   function run(text, promise) { busy(text); return promise.then(function (r) { unbusy(); return r; }, function (e) { unbusy(); errorBox("Что-то пошло не так", [{ title: "Ошибка", items: [String(e && e.message || e)], bad: true }]); throw { shown: true, error: e }; }); }
 
   // Окно «была ошибка»: не пропадает само, как подсказка, — видно, что именно не вышло.
-  // sections: [{title, items, bad}], opts: {ok: строка итога, report: путь к отчёту, folder: путь}
+  // sections: [{title, items, bad}], opts: {ok: строка итога, report: путь к отчёту, folder: путь,
+  //   action: {label, fn} — главная кнопка вместо «Понятно» (например, «Докачать не скачавшиеся»)}
   function errorBox(title, sections, opts) {
     opts = opts || {};
     modal("⚠ " + title, function (c, f) {
@@ -252,9 +253,15 @@
       if (opts.report) c.appendChild(el("div", "hint", "Подробный отчёт: " + opts.report));
       if (opts.report) { var r = el("button", "btn ghost", "Открыть отчёт"); r.onclick = function () { api().open_file(opts.report); }; f.appendChild(r); }
       if (opts.folder) { var o = el("button", "btn ghost", "Открыть папку"); o.onclick = function () { api().open_folder(opts.folder); }; f.appendChild(o); }
-      var ok = el("button", "btn primary", "Понятно"); ok.onclick = closeModal; f.appendChild(ok);
+      if (opts.action) {
+        var later = el("button", "btn ghost", "Закрыть"); later.onclick = closeModal; f.appendChild(later);
+        var act = el("button", "btn primary", opts.action.label); act.onclick = function () { closeModal(); opts.action.fn(); }; f.appendChild(act);
+      } else {
+        var ok = el("button", "btn primary", "Понятно"); ok.onclick = closeModal; f.appendChild(ok);
+      }
     }, true);
   }
+  function retryLabel(n, what) { return what + " (" + n + ")"; }
 
   // ── папки слева ──
   function renderFolders() {
@@ -534,7 +541,8 @@
       if (!res.ok && res.error) return errorBox("Обновление не удалось", [{ title: "Ошибка", items: [res.error], bad: true }]);
       var msg = (res.done && res.done.length ? "Обновлено:\n" + res.done.join("\n") : "") +
         (res.running ? "\n\nИгра запущена — новые версии подхватятся после перезапуска." : "");
-      if (res.failed && res.failed.length) errorBox("Обновилось не всё", [{ title: "Не вышло", items: res.failed, bad: true }, { title: "Обновлено", items: res.done || [] }]);
+      if (res.failed && res.failed.length) errorBox("Обновилось не всё", [{ title: "Не вышло", items: res.failed, bad: true }, { title: "Обновлено", items: res.done || [] }],
+        res.failed_keys && res.failed_keys.length ? { action: { label: retryLabel(res.failed_keys.length, "Повторить не вышедшие"), fn: function () { doApply(res.failed_keys); } } } : {});
       else toast(msg.trim());
       refreshFolders(); refreshView();
     });
@@ -544,7 +552,12 @@
   function applyMany(promise) {
     run("Обновляю…", promise).then(function (res) {
       if (!res.ok && res.error) return errorBox("Обновление не удалось", [{ title: "Ошибка", items: [res.error], bad: true }]);
-      if (res.failed && res.failed.length) { errorBox("Обновилось не всё", [{ title: "Не вышло", items: res.failed, bad: true }, { title: "Обновлено", items: res.done || [] }]); refreshFolders(); refreshView(); return; }
+      if (res.failed && res.failed.length) {
+        var plan = res.retry || {}, n = Object.keys(plan).reduce(function (a, k) { return a + plan[k].length; }, 0);
+        errorBox("Обновилось не всё", [{ title: "Не вышло", items: res.failed, bad: true }, { title: "Обновлено", items: res.done || [] }],
+          n ? { action: { label: retryLabel(n, "Повторить не вышедшие"), fn: function () { applyMany(api().apply_plan(plan)); } } } : {});
+        refreshFolders(); refreshView(); return;
+      }
       var msg = (res.done && res.done.length ? "Обновлено: " + res.done.length + "\n" + res.done.slice(0, 12).join("\n") + (res.done.length > 12 ? "\n…" : "") : "") +
         (res.failed && res.failed.length ? "\n\nНе вышло:\n" + res.failed.join("\n") : "") +
         (res.running ? "\n\nГде игра запущена — новые версии подхватятся после перезапуска." : "");
@@ -728,7 +741,7 @@
         if (dest && !dest.exists) box.appendChild(el("div", "hint", "Папки mods там нет — создам её: " + dest.path));
         else if (dest && dest.picked && dest.picked !== dest.path) box.appendChild(el("div", "hint", "Моды лягут в " + dest.path));
         if (dest && dest.jars) box.appendChild(el("div", "hint", "⚠ Там уже " + dest.jars + " " + plural(dest.jars, "мод", "мода", "модов") +
-          " — уберу их в бэкап (modup-backup рядом с папкой), «Откат» вернёт как было."));
+          " — уберу их в бэкап (modup-backup рядом с папкой), «Откат» вернёт как было. Уже скачанные нужные файлы оставлю — заново качать не буду."));
       }
       function pick() {
         api().pick_dest().then(function (d) { if (d && d.path) dest = d; renderDest(); upd(); });
@@ -746,29 +759,37 @@
       ok.onclick = function () {
         var keys = boxes.filter(function (b) { return b[0].checked; }).map(function (b) { return b[1].key; });
         var extras = extraBoxes.filter(function (b) { return b[0].checked; }).map(function (b) { return b[1].key; });
-        run("Скачиваю моды под " + plan.target + "…", api().migrate_apply(dest.path, keys, extras)).then(function (res) {
-          if (!res.ok) return errorBox("Перенос не удался", [{ title: res.error ? "Ошибка" : "Не скачались", items: res.error ? [res.error] : (res.failed || []), bad: true }],
-            { report: res.report, folder: res.dest });
-          if (res.folders) { S.folders = res.folders; renderFolders(); }
-          var msg = "Готово: " + res.done.length + " " + plural(res.done.length, "мод", "мода", "модов") + " в " + res.dest;
-          if (res.moved) msg += "\nСтарые моды папки (" + res.moved + ") — в бэкапе";
-          if (res.failed.length) msg += "\nНе скачались: " + res.failed.join("; ");
-          if (res.settings && res.settings.length) msg += "\nПеренесено: " + res.settings.join("; ");
-          if (res.left.length) msg += "\nНет под " + plan.target + ": " + res.left.join(", ");
-          if (res.failed.length || res.left.length) {
-            errorBox("Перенос прошёл не полностью", [
-              { title: "Не скачались", items: res.failed, bad: true },
-              { title: "Нет сборки под " + plan.target + " — найди и поставь сам", items: res.left, bad: true },
-              { title: "Перенесено из настроек", items: res.settings || [] }],
-              { ok: "Перенесено модов: " + res.done.length + " в " + res.dest, report: res.report, folder: res.dest });
-          } else {
-            if (res.report) msg += "\nОтчёт: " + res.report;
-            toast(msg);
-          }
-          select(res.dest);
-        });
+        migrateRun(plan, dest.path, keys, extras, false);
       };
     }, true);
+  }
+
+  // Скачать моды переноса и показать итог. retry — «Докачать»: только не скачавшиеся, остальное в папке не трогается.
+  function migrateRun(plan, destPath, keys, extras, retry) {
+    run((retry ? "Докачиваю моды под " : "Скачиваю моды под ") + plan.target + "…", api().migrate_apply(destPath, keys, extras, retry)).then(function (res) {
+      var again = res.failed_keys && res.failed_keys.length ? { label: retryLabel(res.failed_keys.length, "Докачать не скачавшиеся"),
+        fn: function () { migrateRun(plan, res.dest || destPath, res.failed_keys, [], true); } } : null;
+      if (!res.ok) return errorBox(retry ? "Докачать не вышло" : "Перенос не удался",
+        [{ title: res.error ? "Ошибка" : "Не скачались", items: res.error ? [res.error] : (res.failed || []), bad: true }],
+        { report: res.report, folder: res.dest, action: again });
+      if (res.folders) { S.folders = res.folders; renderFolders(); }
+      var got = res.done.length - (res.kept || 0);
+      var msg = (retry ? "Докачано: " : "Готово: ") + got + " " + plural(got, "мод", "мода", "модов") + " в " + res.dest;
+      if (res.kept) msg += "\nУже были скачаны раньше: " + res.kept;
+      if (res.moved) msg += "\nСтарые моды папки (" + res.moved + ") — в бэкапе";
+      if (res.settings && res.settings.length) msg += "\nПеренесено: " + res.settings.join("; ");
+      if (res.failed.length || res.left.length) {
+        errorBox(retry ? "Докачалось не всё" : "Перенос прошёл не полностью", [
+          { title: "Не скачались", items: res.failed, bad: true },
+          { title: "Нет сборки под " + plan.target + " — найди и поставь сам", items: res.left, bad: true },
+          { title: "Перенесено из настроек", items: res.settings || [] }],
+          { ok: msg.split("\n")[0] + (res.kept ? " (ещё " + res.kept + " уже были)" : ""), report: res.report, folder: res.dest, action: again });
+      } else {
+        if (res.report) msg += "\nОтчёт: " + res.report;
+        toast(msg);
+      }
+      select(res.dest);
+    });
   }
 
   // ── экспорт модов ──
